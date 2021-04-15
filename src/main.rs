@@ -55,7 +55,7 @@ struct Bot {
     speak_callbacks: Vec<fn(SpeakEvt)>,
     pmmed_callbacks: Vec<fn(PmmedEvt)>,
     log_ws: bool,
-    tx: Option<Sender<Message>>,
+    tx: Sender<Message>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -152,6 +152,7 @@ impl Bot {
             .as_millis()
             .to_string();
 
+        let (tx, _) = channel(32);
         let b = Bot {
             auth: auth.to_string(),
             user_id: user_id.to_string(),
@@ -164,7 +165,7 @@ impl Bot {
             speak_callbacks: Vec::new(),
             pmmed_callbacks: Vec::new(),
             log_ws: false,
-            tx: None,
+            tx: tx,
         };
         Ok(b)
     }
@@ -183,8 +184,7 @@ impl Bot {
 
     pub async fn speak(&mut self, msg: &str) {
         let payload = h!["api" => ROOM_SPEAK, "text" => msg, "room_id" => self.room_id];
-        let tx = self.tx.clone().unwrap();
-        self.send(&tx, payload, None).await;
+        self.send(payload, None).await;
     }
 
     pub fn log_ws(&mut self, log_ws: bool) {
@@ -196,7 +196,7 @@ impl Bot {
         let (tx1, rx1) = channel(32);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
-            self.tx = Some(tx1.clone());
+            self.tx = tx1.clone();
             self.process_msg(&tx1, msg.as_str()).await;
         }
     }
@@ -240,11 +240,11 @@ impl Bot {
 
         if msg == "~m~10~m~no_session" {
             self.emit("ready", "");
-            self.update_presence(tx).await;
-            self.user_modify(tx).await;
+            self.update_presence().await;
+            self.user_modify().await;
             if self.room_id != "" {
                 let room_id = self.room_id.clone();
-                self.room_register(tx, room_id.as_str()).await;
+                self.room_register(room_id.as_str()).await;
             }
             return;
         }
@@ -291,27 +291,22 @@ impl Bot {
             .push(clb);
     }
 
-    async fn room_register(&mut self, tx: &Sender<Message>, room_id: &str) {
+    async fn room_register(&mut self, room_id: &str) {
         let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
-        self.send(tx, payload, None).await;
+        self.send(payload, None).await;
     }
 
-    async fn user_modify(&mut self, tx: &Sender<Message>) {
+    async fn user_modify(&mut self) {
         let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
-        self.send(tx, payload, None).await;
+        self.send(payload, None).await;
     }
 
-    async fn update_presence(&mut self, tx: &Sender<Message>) {
+    async fn update_presence(&mut self) {
         let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
-        self.send(tx, payload, None).await;
+        self.send(payload, None).await;
     }
 
-    async fn send(
-        &mut self,
-        tx: &Sender<Message>,
-        payload: HashMap<String, serde_json::Value>,
-        clb: Option<fn(&str)>,
-    ) {
+    async fn send(&mut self, payload: HashMap<String, serde_json::Value>, clb: Option<fn(&str)>) {
         let mut json_val = json!({
             "msgid": self.msg_id,
             "clientid": self.client_id,
@@ -329,7 +324,7 @@ impl Bot {
         if self.log_ws {
             println!("< {}", msg);
         }
-        tx.send(Message::text(msg)).await.unwrap();
+        self.tx.send(Message::text(msg)).await.unwrap();
         self.unack_msgs.push(UnackMsg {
             msg_id: self.msg_id,
             payload: original_payload,
@@ -348,7 +343,7 @@ async fn run() {
     bot.on_speak(|evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
         if evt.text == "/ping" {
-            //bot.speak("pong");
+            //bot.speak("pong").await;
         }
     });
     bot.on_pmmed(|evt: PmmedEvt| {
