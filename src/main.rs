@@ -179,6 +179,7 @@ impl Bot {
     }
 
     fn emit(&self, cmd: &str, data: &str) {
+        // TODO: need to simplify this
         if cmd == SPEAK_EVT {
             if let Ok(evt) =
                 serde_json::from_str::<SpeakEvt>(data).map_err(|err| log::error!("{}", err))
@@ -196,6 +197,7 @@ impl Bot {
                     .for_each(|clb| (clb)(evt.clone()));
             }
         }
+        // -------------------
         if let Some(callbacks) = self.callbacks.get(cmd) {
             for clb in callbacks {
                 (clb)(data);
