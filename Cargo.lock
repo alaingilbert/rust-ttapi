@@ -1320,6 +1320,7 @@ dependencies = [
  "futures 0.3.13",
  "futures-channel",
  "futures-util",
+ "lazy_static",
  "regex",
  "serde_json",
  "tokio",

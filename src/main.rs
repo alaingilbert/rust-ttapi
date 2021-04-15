@@ -1,5 +1,6 @@
 use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
+use lazy_static::lazy_static;
 use regex::Regex;
 use serde_json::json;
 use std::time::SystemTime;
@@ -42,9 +43,8 @@ macro_rules! h {
 }
 
 fn get_message_len(msg: &str) -> Option<usize> {
-    let re = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
-    if re.is_match(msg) {
-        if let Some(captures) = re.captures(msg) {
+    if LEN_RGX.is_match(msg) {
+        if let Some(captures) = LEN_RGX.captures(msg) {
             if let Some(msg_len_str) = captures.get(1) {
                 return Some(msg_len_str.as_str().parse().unwrap());
             }
@@ -59,6 +59,24 @@ fn extract_message_json(msg: &str) -> Option<String> {
         if let Some(start_idx) = msg.find("{") {
             let raw_json: String = msg.chars().skip(start_idx).take(msg_len).collect();
             return Some(raw_json);
+        }
+    }
+    None
+}
+
+lazy_static! {
+    static ref HEARTBEAT_RGX: Regex = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
+    static ref LEN_RGX: Regex = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
+}
+
+fn is_heartbeat(msg: &str) -> bool {
+    HEARTBEAT_RGX.is_match(msg)
+}
+
+fn get_heartbeat_id(msg: &str) -> Option<&str> {
+    if let Some(captures) = HEARTBEAT_RGX.captures(msg) {
+        if let Some(heartbeat_id) = captures.get(1) {
+            return Some(heartbeat_id.as_str());
         }
     }
     None
@@ -90,17 +108,19 @@ async fn start_ws(
 
 impl Bot {
     fn new(auth: &str, user_id: &str, room_id: &str) -> Result<Bot, Box<dyn error::Error>> {
+        let unix_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
         let b = Bot {
             auth: auth.to_string(),
             user_id: user_id.to_string(),
             room_id: room_id.to_string(),
-            client_id: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-                .to_string(),
+            client_id: unix_ms,
             msg_id: 0,
-            unack_msgs: vec![],
+            unack_msgs: Vec::new(),
             callbacks: HashMap::new(),
             log_ws: false,
         };
@@ -128,29 +148,27 @@ impl Bot {
         }
     }
 
-    async fn process_msg(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, data: &str) {
+    async fn process_heartbeat(&self, tx: &tokio::sync::mpsc::Sender<Message>, msg: &str) {
+        if let Some(heartbeat_id) = get_heartbeat_id(msg) {
+            let msg = format!("~m~{}~m~{}", heartbeat_id.len(), heartbeat_id);
+            if self.log_ws {
+                println!("< {}", msg);
+            }
+            tx.send(Message::text(msg)).await.unwrap();
+        }
+    }
+
+    async fn process_msg(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, msg: &str) {
         if self.log_ws {
-            println!("> {}", data);
+            println!("> {}", msg);
         }
         // Heartbeat
-        let re = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
-        if re.is_match(data) {
-            if let Some(captures) = re.captures(data) {
-                if let Some(heartbeat_id) = captures.get(1) {
-                    let msg = format!(
-                        "~m~{}~m~{}",
-                        heartbeat_id.as_str().len(),
-                        heartbeat_id.as_str()
-                    );
-                    if self.log_ws {
-                        println!("< {}", msg);
-                    }
-                    tx.send(Message::text(msg)).await.unwrap();
-                }
-            }
+        if is_heartbeat(msg) {
+            self.process_heartbeat(tx, msg).await;
+            return;
         }
 
-        if data == "~m~10~m~no_session" {
+        if msg == "~m~10~m~no_session" {
             self.emit("ready", "");
             self.update_presence(tx).await;
             self.user_modify(tx).await;
@@ -158,9 +176,10 @@ impl Bot {
                 let room_id = self.room_id.clone();
                 self.room_register(tx, room_id.as_str()).await;
             }
+            return;
         }
 
-        if let Some(raw_json) = extract_message_json(data) {
+        if let Some(raw_json) = extract_message_json(msg) {
             self.execute_callback(raw_json.as_str());
             self.process_command(raw_json.as_str());
         }
@@ -196,7 +215,7 @@ impl Bot {
     fn add_callback(&mut self, event_name: &str, clb: fn(&str)) {
         self.callbacks
             .entry(event_name.to_string())
-            .or_insert_with(|| vec![])
+            .or_insert_with(|| Vec::new())
             .push(clb);
     }
 
