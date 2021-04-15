@@ -2,8 +2,12 @@ use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 use regex::Regex;
 use serde_json::json;
+use std::time::SystemTime;
 use std::{collections::HashMap, error};
-use std::{ops::Index, time::SystemTime};
+
+// // Just a generic Result type to ease error handling for us. Errors in multithreaded
+// // async contexts needs some extra restrictions
+// type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 struct UnackMsg {
     msg_id: i64,
@@ -18,6 +22,7 @@ struct Bot {
     client_id: String,
     msg_id: i64,
     unack_msgs: Vec<UnackMsg>,
+    callbacks: HashMap<String, Vec<fn(&str)>>,
 }
 
 macro_rules! h {
@@ -63,16 +68,16 @@ async fn start_ws(
     let m1 = tokio::spawn(async move {
         while let Some(msg) = read.next().await {
             let data = msg.unwrap().into_text().unwrap();
-            tx.send(data).await;
+            tx.send(data).await.expect("failed to send data to tx");
         }
     });
     let m2 = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            write.send(msg).await;
+            write.send(msg).await.expect("failed to send data to ws");
         }
     });
-    m1.await;
-    m2.await;
+    m1.await.unwrap();
+    m2.await.unwrap();
 }
 
 impl Bot {
@@ -88,6 +93,7 @@ impl Bot {
                 .to_string(),
             msg_id: 0,
             unack_msgs: vec![],
+            callbacks: HashMap::new(),
             //ws: client,
         };
         Ok(b)
@@ -102,8 +108,16 @@ impl Bot {
         }
     }
 
+    fn emit(&self, cmd: &str, data: &str) {
+        if let Some(callbacks) = self.callbacks.get(cmd) {
+            for clb in callbacks {
+                (clb)(data);
+            }
+        }
+    }
+
     async fn process_msg(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, data: &str) {
-        println!("> {}", data);
+        //println!("> {}", data);
         // Heartbeat
         let re = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
         if re.is_match(data) {
@@ -114,13 +128,14 @@ impl Bot {
                         heartbeat_id.as_str().len(),
                         heartbeat_id.as_str()
                     );
-                    println!("< {}", msg);
-                    tx.send(Message::text(msg)).await;
+                    //println!("< {}", msg);
+                    tx.send(Message::text(msg)).await.unwrap();
                 }
             }
         }
 
         if data == "~m~10~m~no_session" {
+            self.emit("ready", "");
             self.update_presence(tx).await;
             self.user_modify(tx).await;
             if self.room_id != "" {
@@ -131,6 +146,7 @@ impl Bot {
 
         if let Some(raw_json) = extract_message_json(data) {
             self.execute_callback(raw_json.as_str());
+            self.process_command(raw_json.as_str());
         }
     }
 
@@ -142,10 +158,31 @@ impl Bot {
                 Err(_) => continue,
             };
             if unack_msg.msg_id == msg_id {
+                if let Some(api) = unack_msg.payload.get("api") {
+                    if api == "room.register" {
+                        self.emit("roomChanged", raw_json);
+                    }
+                }
                 (unack_msg.callback)(raw_json);
                 self.unack_msgs.remove(idx);
                 break;
             }
+        }
+    }
+
+    fn process_command(&mut self, raw_json: &str) {
+        let v: serde_json::Value = serde_json::from_str(raw_json).unwrap();
+        if let Some(cmd) = v["command"].as_str() {
+            self.emit(cmd, raw_json);
+        }
+    }
+
+    fn on(&mut self, event_name: &str, clb: fn(&str)) {
+        if !self.callbacks.contains_key(event_name) {
+            self.callbacks.insert(event_name.to_string(), vec![]);
+        }
+        if let Some(hm) = self.callbacks.get_mut(event_name) {
+            hm.push(clb);
         }
     }
 
@@ -187,8 +224,8 @@ impl Bot {
         let raw_json = json_val.to_string();
 
         let msg = format!("~m~{}~m~{}", raw_json.len(), raw_json);
-        println!("< {}", msg);
-        tx.send(Message::text(msg)).await;
+        //println!("< {}", msg);
+        tx.send(Message::text(msg)).await.unwrap();
         self.unack_msgs.push(UnackMsg {
             msg_id: self.msg_id,
             payload: original_payload,
@@ -199,13 +236,19 @@ impl Bot {
 }
 
 async fn run() {
-    println!();
-    let mut bot = Bot::new(
-        "AOhSRFcOVYYAgpRVPKwXGlBM",
-        "604156e1c2dbd9001be73ffc",
-        "6041625e3f4bfc001c3a4ab3",
-    )
-    .unwrap();
+    let auth = std::env::var("AUTH").unwrap();
+    let user_id = std::env::var("USER_ID").unwrap();
+    let room_id = std::env::var("ROOM_ID").unwrap();
+    let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str()).unwrap();
+    bot.on("ready", |raw_json: &str| {
+        println!("bot is ready: {}", raw_json);
+    });
+    bot.on("registered", |raw_json: &str| {
+        println!("bot registered: {}", raw_json);
+    });
+    bot.on("roomChanged", |raw_json: &str| {
+        println!("bot roomChanged: {}", raw_json);
+    });
     bot.start().await;
 }
 
