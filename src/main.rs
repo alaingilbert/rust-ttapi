@@ -6,6 +6,25 @@ use serde_json::json;
 use std::time::SystemTime;
 use std::{collections::HashMap, error};
 
+const ROOM_REGISTER: &str = "room.register";
+const USER_MODIFY: &str = "user.modify";
+const PRESENCE_UPDATE: &str = "presence.update";
+
+const SPEAK_EVT: &str = "speak";
+
+// Valid statuses
+const AVAILABLE: &str = "available";
+//unavailable = "unavailable"
+//away        = "away"
+
+// Valid laptops
+//const ANDROID_LAPTOP: &str = "android";
+// chromeLaptop  = "chrome"
+// iphoneLaptop  = "iphone"
+// linuxLaptop   = "linux"
+const MAC_LAPTOP: &str = "mac";
+//pcLaptop      = "pc"
+
 // // Just a generic Result type to ease error handling for us. Errors in multithreaded
 // // async contexts needs some extra restrictions
 // type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -42,6 +61,11 @@ macro_rules! h {
     }}
 }
 
+lazy_static! {
+    static ref HEARTBEAT_RGX: Regex = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
+    static ref LEN_RGX: Regex = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
+}
+
 fn get_message_len(msg: &str) -> Option<usize> {
     if !LEN_RGX.is_match(msg) {
         return None;
@@ -56,11 +80,6 @@ fn extract_message_json(msg: &str) -> Option<String> {
     let msg_len = get_message_len(msg)?;
     let start_idx = msg.find("{")?;
     Some(msg.chars().skip(start_idx).take(msg_len).collect())
-}
-
-lazy_static! {
-    static ref HEARTBEAT_RGX: Regex = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
-    static ref LEN_RGX: Regex = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
 }
 
 fn is_heartbeat(msg: &str) -> bool {
@@ -98,7 +117,7 @@ async fn start_ws(
 }
 
 impl Bot {
-    fn new(auth: &str, user_id: &str, room_id: &str) -> Result<Bot, Box<dyn error::Error>> {
+    pub fn new(auth: &str, user_id: &str, room_id: &str) -> Result<Bot, Box<dyn error::Error>> {
         let unix_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -116,6 +135,14 @@ impl Bot {
             log_ws: false,
         };
         Ok(b)
+    }
+
+    pub fn on(&mut self, event_name: &str, clb: fn(&str)) {
+        self.add_callback(event_name, clb);
+    }
+
+    pub fn on_chat(&mut self, clb: fn(&str)) {
+        self.add_callback(SPEAK_EVT, clb);
     }
 
     fn log_ws(&mut self, log_ws: bool) {
@@ -185,7 +212,7 @@ impl Bot {
             };
             if unack_msg.msg_id == msg_id {
                 if let Some(api) = unack_msg.payload.get("api") {
-                    if api == "room.register" {
+                    if api == ROOM_REGISTER {
                         self.emit("roomChanged", raw_json);
                     }
                 }
@@ -210,28 +237,20 @@ impl Bot {
             .push(clb);
     }
 
-    pub fn on(&mut self, event_name: &str, clb: fn(&str)) {
-        self.add_callback(event_name, clb);
-    }
-
-    pub fn on_chat(&mut self, clb: fn(&str)) {
-        self.add_callback("speak", clb);
-    }
-
     async fn room_register(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, room_id: &str) {
-        let payload = h!["api" => "room.register", "roomid" => room_id];
+        let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn user_modify(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
-        let payload = h!["api" => "user.modify", "laptop" => "mac"];
+        let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn update_presence(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
-        let payload = h!["api" => "presence.update", "status" => "available"];
+        let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
