@@ -82,12 +82,13 @@ macro_rules! h {
     }}
 }
 
+// Compare "cmd" with "cmp", if match, json parse "data" using "typ" and execute provided callbacks
 macro_rules! execute_callbacks {
-    ( $cmd: expr, $data: expr, $( ($cmp: expr, $key: expr, $typ: ty)),*) => {{
+    ( $cmd: expr, $data: expr, $( ($cmp: expr, $callbacks: expr, $typ: ty)),*) => {{
         $(
             if $cmd == $cmp {
                 if let Ok(evt) = serde_json::from_str::<$typ>($data).map_err(|err| log::error!("{}", err)) {
-                    $key.iter().for_each(|clb| (clb)(evt.clone()));
+                    $callbacks.iter().for_each(|clb| (clb)(evt.clone()));
                 }
             }
         )*
