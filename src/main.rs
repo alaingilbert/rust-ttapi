@@ -73,9 +73,6 @@ lazy_static! {
 }
 
 fn get_message_len(msg: &str) -> Option<usize> {
-    if !LEN_RGX.is_match(msg) {
-        return None;
-    }
     let captures = LEN_RGX.captures(msg)?;
     let msg_len_str = captures.get(1)?;
     msg_len_str.as_str().parse().ok()
