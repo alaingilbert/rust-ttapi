@@ -68,12 +68,9 @@ fn is_heartbeat(msg: &str) -> bool {
 }
 
 fn get_heartbeat_id(msg: &str) -> Option<&str> {
-    if let Some(captures) = HEARTBEAT_RGX.captures(msg) {
-        if let Some(heartbeat_id) = captures.get(1) {
-            return Some(heartbeat_id.as_str());
-        }
-    }
-    None
+    let captures = HEARTBEAT_RGX.captures(msg)?;
+    let heartbeat_id = captures.get(1)?;
+    Some(heartbeat_id.as_str())
 }
 
 async fn start_ws(
