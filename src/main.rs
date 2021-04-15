@@ -3,6 +3,7 @@ use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::SystemTime;
 use std::{collections::HashMap, env, error};
@@ -49,15 +50,17 @@ struct Bot {
     msg_id: i64,
     unack_msgs: Vec<UnackMsg>,
     callbacks: HashMap<String, Vec<fn(&str)>>,
+    speak_callbacks: Vec<fn(SpeakEvt)>,
     log_ws: bool,
 }
 
-// struct SpeakEvt {
-//     command: String,
-//     user_id: String,
-//     name: String,
-//     text: String,
-// }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SpeakEvt {
+    command: String,
+    userid: String,
+    name: String,
+    text: String,
+}
 
 macro_rules! h {
     ($( $key: expr => $val: expr ),*) => {{
@@ -131,6 +134,7 @@ impl Bot {
             msg_id: 0,
             unack_msgs: Vec::new(),
             callbacks: HashMap::new(),
+            speak_callbacks: Vec::new(),
             log_ws: false,
         };
         Ok(b)
@@ -140,11 +144,11 @@ impl Bot {
         self.add_callback(event_name, clb);
     }
 
-    pub fn on_chat(&mut self, clb: fn(&str)) {
-        self.add_callback(SPEAK_EVT, clb);
+    pub fn on_speak(&mut self, clb: fn(SpeakEvt)) {
+        self.speak_callbacks.push(clb);
     }
 
-    fn log_ws(&mut self, log_ws: bool) {
+    pub fn log_ws(&mut self, log_ws: bool) {
         self.log_ws = log_ws;
     }
 
@@ -158,6 +162,15 @@ impl Bot {
     }
 
     fn emit(&self, cmd: &str, data: &str) {
+        if cmd == SPEAK_EVT {
+            if let Ok(evt) =
+                serde_json::from_str::<SpeakEvt>(data).map_err(|err| log::error!("{}", err))
+            {
+                self.speak_callbacks
+                    .iter()
+                    .for_each(|clb| (clb)(evt.clone()));
+            }
+        }
         if let Some(callbacks) = self.callbacks.get(cmd) {
             for clb in callbacks {
                 (clb)(data);
@@ -291,9 +304,9 @@ async fn run() {
     let user_id = env::var("USER_ID").unwrap();
     let room_id = env::var("ROOM_ID").unwrap();
     let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str()).unwrap();
-    bot.log_ws(false);
-    bot.on_chat(|raw_json: &str| {
-        println!("chat event: {}", raw_json);
+    bot.log_ws(true);
+    bot.on_speak(|evt: SpeakEvt| {
+        println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
     });
     bot.on("ready", |raw_json: &str| {
         println!("bot is ready: {}", raw_json);
@@ -309,5 +322,9 @@ async fn run() {
 
 #[tokio::main]
 async fn main() {
+    env_logger::Builder::new()
+        .target(env_logger::Target::Stdout)
+        .init();
+
     run().await;
 }
