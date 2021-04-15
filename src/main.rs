@@ -14,6 +14,7 @@ const USER_MODIFY: &str = "user.modify";
 const PRESENCE_UPDATE: &str = "presence.update";
 
 const SPEAK_EVT: &str = "speak";
+const PMMED_EVT: &str = "pmmed";
 
 // Valid statuses
 const AVAILABLE: &str = "available";
@@ -51,6 +52,7 @@ struct Bot {
     unack_msgs: Vec<UnackMsg>,
     callbacks: HashMap<String, Vec<fn(&str)>>,
     speak_callbacks: Vec<fn(SpeakEvt)>,
+    pmmed_callbacks: Vec<fn(PmmedEvt)>,
     log_ws: bool,
 }
 
@@ -60,6 +62,16 @@ struct SpeakEvt {
     userid: String,
     name: String,
     text: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmmedEvt {
+    pub text: String,
+    pub userid: String,
+    pub senderid: String,
+    pub command: String,
+    pub time: f64,
 }
 
 macro_rules! h {
@@ -135,6 +147,7 @@ impl Bot {
             unack_msgs: Vec::new(),
             callbacks: HashMap::new(),
             speak_callbacks: Vec::new(),
+            pmmed_callbacks: Vec::new(),
             log_ws: false,
         };
         Ok(b)
@@ -146,6 +159,10 @@ impl Bot {
 
     pub fn on_speak(&mut self, clb: fn(SpeakEvt)) {
         self.speak_callbacks.push(clb);
+    }
+
+    pub fn on_pmmed(&mut self, clb: fn(PmmedEvt)) {
+        self.pmmed_callbacks.push(clb);
     }
 
     pub fn log_ws(&mut self, log_ws: bool) {
@@ -167,6 +184,14 @@ impl Bot {
                 serde_json::from_str::<SpeakEvt>(data).map_err(|err| log::error!("{}", err))
             {
                 self.speak_callbacks
+                    .iter()
+                    .for_each(|clb| (clb)(evt.clone()));
+            }
+        } else if cmd == PMMED_EVT {
+            if let Ok(evt) =
+                serde_json::from_str::<PmmedEvt>(data).map_err(|err| log::error!("{}", err))
+            {
+                self.pmmed_callbacks
                     .iter()
                     .for_each(|clb| (clb)(evt.clone()));
             }
@@ -307,6 +332,9 @@ async fn run() {
     bot.log_ws(true);
     bot.on_speak(|evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
+    });
+    bot.on_pmmed(|evt: PmmedEvt| {
+        println!("pm event: {} => {}", evt.senderid, evt.text);
     });
     bot.on("ready", |raw_json: &str| {
         println!("bot is ready: {}", raw_json);
