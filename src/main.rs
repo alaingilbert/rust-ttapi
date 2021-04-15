@@ -82,6 +82,18 @@ macro_rules! h {
     }}
 }
 
+macro_rules! execute_callbacks {
+    ( $cmd: expr, $data: expr, $( ($cmp: expr, $key: expr, $typ: ty)),*) => {{
+        $(
+            if $cmd == $cmp {
+                if let Ok(evt) = serde_json::from_str::<$typ>($data).map_err(|err| log::error!("{}", err)) {
+                    $key.iter().for_each(|clb| (clb)(evt.clone()));
+                }
+            }
+        )*
+    }};
+}
+
 lazy_static! {
     static ref HEARTBEAT_RGX: Regex = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
     static ref LEN_RGX: Regex = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
@@ -179,25 +191,12 @@ impl Bot {
     }
 
     fn emit(&self, cmd: &str, data: &str) {
-        // TODO: need to simplify this
-        if cmd == SPEAK_EVT {
-            if let Ok(evt) =
-                serde_json::from_str::<SpeakEvt>(data).map_err(|err| log::error!("{}", err))
-            {
-                self.speak_callbacks
-                    .iter()
-                    .for_each(|clb| (clb)(evt.clone()));
-            }
-        } else if cmd == PMMED_EVT {
-            if let Ok(evt) =
-                serde_json::from_str::<PmmedEvt>(data).map_err(|err| log::error!("{}", err))
-            {
-                self.pmmed_callbacks
-                    .iter()
-                    .for_each(|clb| (clb)(evt.clone()));
-            }
-        }
-        // -------------------
+        execute_callbacks!(
+            cmd,
+            data,
+            (SPEAK_EVT, self.speak_callbacks, SpeakEvt),
+            (PMMED_EVT, self.pmmed_callbacks, PmmedEvt)
+        );
         if let Some(callbacks) = self.callbacks.get(cmd) {
             for clb in callbacks {
                 (clb)(data);
