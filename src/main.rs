@@ -43,14 +43,12 @@ macro_rules! h {
 }
 
 fn get_message_len(msg: &str) -> Option<usize> {
-    if LEN_RGX.is_match(msg) {
-        if let Some(captures) = LEN_RGX.captures(msg) {
-            if let Some(msg_len_str) = captures.get(1) {
-                return Some(msg_len_str.as_str().parse().unwrap());
-            }
-        }
+    if !LEN_RGX.is_match(msg) {
+        return None;
     }
-    None
+    let captures = LEN_RGX.captures(msg)?;
+    let msg_len_str = captures.get(1)?;
+    msg_len_str.as_str().parse().ok()
 }
 
 // Extract the json part of a websocket message
