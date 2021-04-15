@@ -23,7 +23,15 @@ struct Bot {
     msg_id: i64,
     unack_msgs: Vec<UnackMsg>,
     callbacks: HashMap<String, Vec<fn(&str)>>,
+    log_ws: bool,
 }
+
+// struct SpeakEvt {
+//     command: String,
+//     user_id: String,
+//     name: String,
+//     text: String,
+// }
 
 macro_rules! h {
     ($( $key: expr => $val: expr ),*) => {{
@@ -94,9 +102,13 @@ impl Bot {
             msg_id: 0,
             unack_msgs: vec![],
             callbacks: HashMap::new(),
-            //ws: client,
+            log_ws: false,
         };
         Ok(b)
+    }
+
+    fn log_ws(&mut self, log_ws: bool) {
+        self.log_ws = log_ws;
     }
 
     async fn start(&mut self) {
@@ -117,7 +129,9 @@ impl Bot {
     }
 
     async fn process_msg(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, data: &str) {
-        //println!("> {}", data);
+        if self.log_ws {
+            println!("> {}", data);
+        }
         // Heartbeat
         let re = Regex::new(r"^~m~[0-9]+~m~(~h~[0-9]+)$").unwrap();
         if re.is_match(data) {
@@ -128,7 +142,9 @@ impl Bot {
                         heartbeat_id.as_str().len(),
                         heartbeat_id.as_str()
                     );
-                    //println!("< {}", msg);
+                    if self.log_ws {
+                        println!("< {}", msg);
+                    }
                     tx.send(Message::text(msg)).await.unwrap();
                 }
             }
@@ -177,13 +193,19 @@ impl Bot {
         }
     }
 
-    fn on(&mut self, event_name: &str, clb: fn(&str)) {
-        if !self.callbacks.contains_key(event_name) {
-            self.callbacks.insert(event_name.to_string(), vec![]);
-        }
-        if let Some(hm) = self.callbacks.get_mut(event_name) {
-            hm.push(clb);
-        }
+    fn add_callback(&mut self, event_name: &str, clb: fn(&str)) {
+        self.callbacks
+            .entry(event_name.to_string())
+            .or_insert_with(|| vec![])
+            .push(clb);
+    }
+
+    pub fn on(&mut self, event_name: &str, clb: fn(&str)) {
+        self.add_callback(event_name, clb);
+    }
+
+    pub fn on_chat(&mut self, clb: fn(&str)) {
+        self.add_callback("speak", clb);
     }
 
     async fn room_register(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, room_id: &str) {
@@ -224,7 +246,9 @@ impl Bot {
         let raw_json = json_val.to_string();
 
         let msg = format!("~m~{}~m~{}", raw_json.len(), raw_json);
-        //println!("< {}", msg);
+        if self.log_ws {
+            println!("< {}", msg);
+        }
         tx.send(Message::text(msg)).await.unwrap();
         self.unack_msgs.push(UnackMsg {
             msg_id: self.msg_id,
@@ -240,6 +264,10 @@ async fn run() {
     let user_id = std::env::var("USER_ID").unwrap();
     let room_id = std::env::var("ROOM_ID").unwrap();
     let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str()).unwrap();
+    bot.log_ws(false);
+    bot.on_chat(|raw_json: &str| {
+        println!("chat event: {}", raw_json);
+    });
     bot.on("ready", |raw_json: &str| {
         println!("bot is ready: {}", raw_json);
     });
