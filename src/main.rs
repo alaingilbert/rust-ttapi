@@ -53,13 +53,9 @@ fn get_message_len(msg: &str) -> Option<usize> {
 
 // Extract the json part of a websocket message
 fn extract_message_json(msg: &str) -> Option<String> {
-    if let Some(msg_len) = get_message_len(msg) {
-        if let Some(start_idx) = msg.find("{") {
-            let raw_json: String = msg.chars().skip(start_idx).take(msg_len).collect();
-            return Some(raw_json);
-        }
-    }
-    None
+    let msg_len = get_message_len(msg)?;
+    let start_idx = msg.find("{")?;
+    Some(msg.chars().skip(start_idx).take(msg_len).collect())
 }
 
 lazy_static! {
