@@ -197,7 +197,7 @@ impl Bot {
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
             self.tx = tx1.clone();
-            self.process_msg(&tx1, msg.as_str()).await;
+            self.process_msg(msg.as_str()).await;
         }
     }
 
@@ -218,23 +218,23 @@ impl Bot {
         }
     }
 
-    async fn process_heartbeat(&self, tx: &Sender<Message>, msg: &str) {
+    async fn process_heartbeat(&self, msg: &str) {
         if let Some(heartbeat_id) = get_heartbeat_id(msg) {
             let msg = format!("~m~{}~m~{}", heartbeat_id.len(), heartbeat_id);
             if self.log_ws {
                 println!("< {}", msg);
             }
-            tx.send(Message::text(msg)).await.unwrap();
+            self.tx.send(Message::text(msg)).await.unwrap();
         }
     }
 
-    async fn process_msg(&mut self, tx: &Sender<Message>, msg: &str) {
+    async fn process_msg(&mut self, msg: &str) {
         if self.log_ws {
             println!("> {}", msg);
         }
         // Heartbeat
         if is_heartbeat(msg) {
-            self.process_heartbeat(tx, msg).await;
+            self.process_heartbeat(msg).await;
             return;
         }
 
