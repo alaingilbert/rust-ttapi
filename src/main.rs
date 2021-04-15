@@ -2,8 +2,14 @@ use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 use regex::Regex;
 use serde_json::json;
-use std::time::SystemTime;
 use std::{collections::HashMap, error};
+use std::{ops::Index, time::SystemTime};
+
+struct UnackMsg {
+    msg_id: i64,
+    payload: HashMap<String, serde_json::Value>,
+    callback: fn(&str),
+}
 
 struct Bot {
     auth: String,
@@ -11,7 +17,7 @@ struct Bot {
     room_id: String,
     client_id: String,
     msg_id: i64,
-    //ws: websocket::client::sync::Client<Box<dyn NetworkStream + Send>>,
+    unack_msgs: Vec<UnackMsg>,
 }
 
 macro_rules! h {
@@ -20,6 +26,29 @@ macro_rules! h {
          $( map.insert($key.to_string(), serde_json::Value::String($val.to_string())); )*
          map
     }}
+}
+
+fn get_message_len(msg: &str) -> Option<usize> {
+    let re = Regex::new(r"^~m~([0-9]+)~m~").unwrap();
+    if re.is_match(msg) {
+        if let Some(captures) = re.captures(msg) {
+            if let Some(msg_len_str) = captures.get(1) {
+                return Some(msg_len_str.as_str().parse().unwrap());
+            }
+        }
+    }
+    None
+}
+
+// Extract the json part of a websocket message
+fn extract_message_json(msg: &str) -> Option<String> {
+    if let Some(msg_len) = get_message_len(msg) {
+        if let Some(start_idx) = msg.find("{") {
+            let raw_json: String = msg.chars().skip(start_idx).take(msg_len).collect();
+            return Some(raw_json);
+        }
+    }
+    None
 }
 
 async fn start_ws(
@@ -58,6 +87,7 @@ impl Bot {
                 .as_millis()
                 .to_string(),
             msg_id: 0,
+            unack_msgs: vec![],
             //ws: client,
         };
         Ok(b)
@@ -98,23 +128,42 @@ impl Bot {
                 self.room_register(tx, room_id.as_str()).await;
             }
         }
+
+        if let Some(raw_json) = extract_message_json(data) {
+            self.execute_callback(raw_json.as_str());
+        }
+    }
+
+    fn execute_callback(&mut self, raw_json: &str) {
+        for (idx, unack_msg) in (&self.unack_msgs).iter().enumerate() {
+            let v: serde_json::Value = serde_json::from_str(raw_json).unwrap();
+            let msg_id: i64 = match v["msgid"].to_string().parse() {
+                Ok(num) => num,
+                Err(_) => continue,
+            };
+            if unack_msg.msg_id == msg_id {
+                (unack_msg.callback)(raw_json);
+                self.unack_msgs.remove(idx);
+                break;
+            }
+        }
     }
 
     async fn room_register(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, room_id: &str) {
         let payload = h!["api" => "room.register", "roomid" => room_id];
-        let clb = |_: Vec<u8>| {};
+        let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn user_modify(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
         let payload = h!["api" => "user.modify", "laptop" => "mac"];
-        let clb = |_: Vec<u8>| {};
+        let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn update_presence(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
         let payload = h!["api" => "presence.update", "status" => "available"];
-        let clb = |_: Vec<u8>| {};
+        let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
@@ -122,7 +171,7 @@ impl Bot {
         &mut self,
         tx: &tokio::sync::mpsc::Sender<Message>,
         payload: HashMap<String, serde_json::Value>,
-        _: fn(Vec<u8>),
+        clb: fn(&str),
     ) {
         let mut json_val = json!({
             "msgid": self.msg_id,
@@ -131,6 +180,7 @@ impl Bot {
             "userauth": self.auth,
             "client": "web",
         });
+        let original_payload = payload.clone();
         for (k, v) in payload {
             json_val[k] = v;
         }
@@ -139,6 +189,11 @@ impl Bot {
         let msg = format!("~m~{}~m~{}", raw_json.len(), raw_json);
         println!("< {}", msg);
         tx.send(Message::text(msg)).await;
+        self.unack_msgs.push(UnackMsg {
+            msg_id: self.msg_id,
+            payload: original_payload,
+            callback: clb,
+        });
         self.msg_id += 1;
     }
 }
