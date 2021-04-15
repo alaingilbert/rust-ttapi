@@ -43,6 +43,7 @@ struct UnackMsg {
     callback: Option<fn(&str)>,
 }
 
+#[derive(Default)]
 struct Bot {
     auth: String,
     user_id: String,
@@ -158,13 +159,7 @@ impl Bot {
             room_id: room_id.to_string(),
             client_id: unix_ms,
             client: WEB_CLIENT.to_string(),
-            msg_id: 0,
-            unack_msgs: Vec::new(),
-            callbacks: HashMap::new(),
-            speak_callbacks: Vec::new(),
-            pmmed_callbacks: Vec::new(),
-            log_ws: false,
-            tx: None,
+            ..Default::default()
         };
         Ok(b)
     }
