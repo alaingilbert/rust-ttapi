@@ -12,6 +12,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 const ROOM_REGISTER: &str = "room.register";
 const USER_MODIFY: &str = "user.modify";
 const PRESENCE_UPDATE: &str = "presence.update";
+const ROOM_SPEAK: &str = "room.speak";
 
 const SPEAK_EVT: &str = "speak";
 const PMMED_EVT: &str = "pmmed";
@@ -54,6 +55,7 @@ struct Bot {
     speak_callbacks: Vec<fn(SpeakEvt)>,
     pmmed_callbacks: Vec<fn(PmmedEvt)>,
     log_ws: bool,
+    tx: Option<Sender<Message>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -162,6 +164,7 @@ impl Bot {
             speak_callbacks: Vec::new(),
             pmmed_callbacks: Vec::new(),
             log_ws: false,
+            tx: None,
         };
         Ok(b)
     }
@@ -178,6 +181,12 @@ impl Bot {
         self.pmmed_callbacks.push(clb);
     }
 
+    pub async fn speak(&mut self, msg: &str) {
+        let payload = h!["api" => ROOM_SPEAK, "text" => msg, "room_id" => self.room_id];
+        let tx = self.tx.clone().unwrap();
+        self.send(&tx, payload, None).await;
+    }
+
     pub fn log_ws(&mut self, log_ws: bool) {
         self.log_ws = log_ws;
     }
@@ -187,17 +196,21 @@ impl Bot {
         let (tx1, rx1) = channel(32);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
+            self.tx = Some(tx1.clone());
             self.process_msg(&tx1, msg.as_str()).await;
         }
     }
 
     fn emit(&self, cmd: &str, data: &str) {
+        // Execute event specific callbacks
         execute_callbacks!(
             cmd,
             data,
             (SPEAK_EVT, self.speak_callbacks, SpeakEvt),
             (PMMED_EVT, self.pmmed_callbacks, PmmedEvt)
         );
+
+        // Execute string registered key, callbacks
         if let Some(callbacks) = self.callbacks.get(cmd) {
             for clb in callbacks {
                 (clb)(data);
@@ -334,6 +347,9 @@ async fn run() {
     bot.log_ws(true);
     bot.on_speak(|evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
+        if evt.text == "/ping" {
+            //bot.peak("pong");
+        }
     });
     bot.on_pmmed(|evt: PmmedEvt| {
         println!("pm event: {} => {}", evt.senderid, evt.text);
