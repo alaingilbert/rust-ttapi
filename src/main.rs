@@ -55,7 +55,7 @@ struct Bot {
     speak_callbacks: Vec<fn(SpeakEvt)>,
     pmmed_callbacks: Vec<fn(PmmedEvt)>,
     log_ws: bool,
-    tx: Sender<Message>,
+    tx: Option<Sender<Message>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -152,7 +152,6 @@ impl Bot {
             .as_millis()
             .to_string();
 
-        let (tx, _) = channel(32);
         let b = Bot {
             auth: auth.to_string(),
             user_id: user_id.to_string(),
@@ -165,7 +164,7 @@ impl Bot {
             speak_callbacks: Vec::new(),
             pmmed_callbacks: Vec::new(),
             log_ws: false,
-            tx: tx,
+            tx: None,
         };
         Ok(b)
     }
@@ -194,7 +193,7 @@ impl Bot {
     async fn start(&mut self) {
         let (tx, mut rx) = channel(32);
         let (tx1, rx1) = channel(32);
-        self.tx = tx1;
+        self.tx = Some(tx1);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
             self.process_msg(msg.as_str()).await;
@@ -224,7 +223,8 @@ impl Bot {
             if self.log_ws {
                 println!("< {}", msg);
             }
-            self.tx.send(Message::text(msg)).await.unwrap();
+            let tx = self.tx.clone().unwrap();
+            tx.send(Message::text(msg)).await.unwrap();
         }
     }
 
@@ -324,7 +324,8 @@ impl Bot {
         if self.log_ws {
             println!("< {}", msg);
         }
-        self.tx.send(Message::text(msg)).await.unwrap();
+        let tx = self.tx.clone().unwrap();
+        tx.send(Message::text(msg)).await.unwrap();
         self.unack_msgs.push(UnackMsg {
             msg_id: self.msg_id,
             payload: original_payload,
