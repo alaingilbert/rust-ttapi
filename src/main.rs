@@ -6,7 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::SystemTime;
-use std::{collections::HashMap, env, error};
+use std::{collections::HashMap, env};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 const ROOM_REGISTER: &str = "room.register";
@@ -59,7 +59,8 @@ struct Bot {
     tx: Option<Sender<Message>>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SpeakEvt {
     command: String,
     userid: String,
