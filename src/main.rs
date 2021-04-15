@@ -34,7 +34,7 @@ const MAC_LAPTOP: &str = "mac";
 struct UnackMsg {
     msg_id: i64,
     payload: HashMap<String, serde_json::Value>,
-    callback: fn(&str),
+    callback: Option<fn(&str)>,
 }
 
 struct Bot {
@@ -213,7 +213,9 @@ impl Bot {
                         self.emit("roomChanged", raw_json);
                     }
                 }
-                (unack_msg.callback)(raw_json);
+                if let Some(clb) = unack_msg.callback {
+                    (clb)(raw_json);
+                }
                 self.unack_msgs.remove(idx);
                 break;
             }
@@ -236,27 +238,24 @@ impl Bot {
 
     async fn room_register(&mut self, tx: &Sender<Message>, room_id: &str) {
         let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
-        let clb = |_: &str| {};
-        self.send(tx, payload, clb).await;
+        self.send(tx, payload, None).await;
     }
 
     async fn user_modify(&mut self, tx: &Sender<Message>) {
         let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
-        let clb = |_: &str| {};
-        self.send(tx, payload, clb).await;
+        self.send(tx, payload, None).await;
     }
 
     async fn update_presence(&mut self, tx: &Sender<Message>) {
         let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
-        let clb = |_: &str| {};
-        self.send(tx, payload, clb).await;
+        self.send(tx, payload, None).await;
     }
 
     async fn send(
         &mut self,
         tx: &Sender<Message>,
         payload: HashMap<String, serde_json::Value>,
-        clb: fn(&str),
+        clb: Option<fn(&str)>,
     ) {
         let mut json_val = json!({
             "msgid": self.msg_id,
