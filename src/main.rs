@@ -348,7 +348,7 @@ async fn run() {
     bot.on_speak(|evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
         if evt.text == "/ping" {
-            //bot.peak("pong");
+            //bot.speak("pong");
         }
     });
     bot.on_pmmed(|evt: PmmedEvt| {
