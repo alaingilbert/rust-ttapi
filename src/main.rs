@@ -27,6 +27,9 @@ const AVAILABLE: &str = "available";
 const MAC_LAPTOP: &str = "mac";
 //pcLaptop      = "pc"
 
+// Valid clients
+const WEB_CLIENT: &str = "web";
+
 // // Just a generic Result type to ease error handling for us. Errors in multithreaded
 // // async contexts needs some extra restrictions
 // type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -42,6 +45,7 @@ struct Bot {
     user_id: String,
     room_id: String,
     client_id: String,
+    client: String,
     msg_id: i64,
     unack_msgs: Vec<UnackMsg>,
     callbacks: HashMap<String, Vec<fn(&str)>>,
@@ -126,6 +130,7 @@ impl Bot {
             user_id: user_id.to_string(),
             room_id: room_id.to_string(),
             client_id: unix_ms,
+            client: WEB_CLIENT.to_string(),
             msg_id: 0,
             unack_msgs: Vec::new(),
             callbacks: HashMap::new(),
@@ -262,7 +267,7 @@ impl Bot {
             "clientid": self.client_id,
             "userid": self.user_id,
             "userauth": self.auth,
-            "client": "web",
+            "client": self.client,
         });
         let original_payload = payload.clone();
         for (k, v) in payload {
