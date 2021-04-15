@@ -194,9 +194,9 @@ impl Bot {
     async fn start(&mut self) {
         let (tx, mut rx) = channel(32);
         let (tx1, rx1) = channel(32);
+        self.tx = tx1;
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
-            self.tx = tx1.clone();
             self.process_msg(msg.as_str()).await;
         }
     }
