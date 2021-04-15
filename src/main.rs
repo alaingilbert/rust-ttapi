@@ -1,10 +1,12 @@
+use async_tungstenite::tokio::connect_async;
 use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_json::json;
 use std::time::SystemTime;
-use std::{collections::HashMap, error};
+use std::{collections::HashMap, env, error};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 const ROOM_REGISTER: &str = "room.register";
 const USER_MODIFY: &str = "user.modify";
@@ -92,14 +94,9 @@ fn get_heartbeat_id(msg: &str) -> Option<&str> {
     Some(heartbeat_id.as_str())
 }
 
-async fn start_ws(
-    tx: tokio::sync::mpsc::Sender<String>,
-    mut rx: tokio::sync::mpsc::Receiver<Message>,
-) {
+async fn start_ws(tx: Sender<String>, mut rx: Receiver<Message>) {
     let ws_url = "wss://chat1.turntable.fm:8080/socket.io/websocket";
-    let (ws_stream, _) = async_tungstenite::tokio::connect_async(ws_url)
-        .await
-        .expect("Failed to connect");
+    let (ws_stream, _) = connect_async(ws_url).await.expect("Failed to connect");
     let (mut write, mut read) = ws_stream.split();
     let m1 = tokio::spawn(async move {
         while let Some(msg) = read.next().await {
@@ -150,8 +147,8 @@ impl Bot {
     }
 
     async fn start(&mut self) {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        let (tx1, rx1) = tokio::sync::mpsc::channel(32);
+        let (tx, mut rx) = channel(32);
+        let (tx1, rx1) = channel(32);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
             self.process_msg(&tx1, msg.as_str()).await;
@@ -166,7 +163,7 @@ impl Bot {
         }
     }
 
-    async fn process_heartbeat(&self, tx: &tokio::sync::mpsc::Sender<Message>, msg: &str) {
+    async fn process_heartbeat(&self, tx: &Sender<Message>, msg: &str) {
         if let Some(heartbeat_id) = get_heartbeat_id(msg) {
             let msg = format!("~m~{}~m~{}", heartbeat_id.len(), heartbeat_id);
             if self.log_ws {
@@ -176,7 +173,7 @@ impl Bot {
         }
     }
 
-    async fn process_msg(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, msg: &str) {
+    async fn process_msg(&mut self, tx: &Sender<Message>, msg: &str) {
         if self.log_ws {
             println!("> {}", msg);
         }
@@ -237,19 +234,19 @@ impl Bot {
             .push(clb);
     }
 
-    async fn room_register(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, room_id: &str) {
+    async fn room_register(&mut self, tx: &Sender<Message>, room_id: &str) {
         let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
-    async fn user_modify(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
+    async fn user_modify(&mut self, tx: &Sender<Message>) {
         let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
     }
 
-    async fn update_presence(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
+    async fn update_presence(&mut self, tx: &Sender<Message>) {
         let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
         let clb = |_: &str| {};
         self.send(tx, payload, clb).await;
@@ -257,7 +254,7 @@ impl Bot {
 
     async fn send(
         &mut self,
-        tx: &tokio::sync::mpsc::Sender<Message>,
+        tx: &Sender<Message>,
         payload: HashMap<String, serde_json::Value>,
         clb: fn(&str),
     ) {
@@ -289,9 +286,9 @@ impl Bot {
 }
 
 async fn run() {
-    let auth = std::env::var("AUTH").unwrap();
-    let user_id = std::env::var("USER_ID").unwrap();
-    let room_id = std::env::var("ROOM_ID").unwrap();
+    let auth = env::var("AUTH").unwrap();
+    let user_id = env::var("USER_ID").unwrap();
+    let room_id = env::var("ROOM_ID").unwrap();
     let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str()).unwrap();
     bot.log_ws(false);
     bot.on_chat(|raw_json: &str| {
