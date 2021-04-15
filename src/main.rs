@@ -146,22 +146,21 @@ async fn start_ws(tx: Sender<String>, mut rx: Receiver<Message>) {
 }
 
 impl Bot {
-    pub fn new(auth: &str, user_id: &str, room_id: &str) -> Result<Bot, Box<dyn error::Error>> {
+    pub fn new(auth: &str, user_id: &str, room_id: &str) -> Bot {
         let unix_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis()
             .to_string();
 
-        let b = Bot {
+        Bot {
             auth: auth.to_string(),
             user_id: user_id.to_string(),
             room_id: room_id.to_string(),
             client_id: unix_ms,
             client: WEB_CLIENT.to_string(),
             ..Default::default()
-        };
-        Ok(b)
+        }
     }
 
     pub fn on(&mut self, event_name: &str, clb: fn(&str)) {
@@ -334,7 +333,7 @@ async fn run() {
     let auth = env::var("AUTH").unwrap();
     let user_id = env::var("USER_ID").unwrap();
     let room_id = env::var("ROOM_ID").unwrap();
-    let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str()).unwrap();
+    let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str());
     bot.log_ws(true);
     bot.on_speak(|evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
