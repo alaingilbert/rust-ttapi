@@ -14,6 +14,14 @@ struct Bot {
     //ws: websocket::client::sync::Client<Box<dyn NetworkStream + Send>>,
 }
 
+macro_rules! h {
+    ($( $key: expr => $val: expr ),*) => {{
+         let mut map = ::std::collections::HashMap::new();
+         $( map.insert($key.to_string(), serde_json::Value::String($val.to_string())); )*
+         map
+    }}
+}
+
 async fn start_ws(
     tx: tokio::sync::mpsc::Sender<String>,
     mut rx: tokio::sync::mpsc::Receiver<Message>,
@@ -32,7 +40,6 @@ async fn start_ws(
     let m2 = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             write.send(msg).await;
-            //println!("RECV {}", msg);
         }
     });
     m1.await;
@@ -94,43 +101,19 @@ impl Bot {
     }
 
     async fn room_register(&mut self, tx: &tokio::sync::mpsc::Sender<Message>, room_id: &str) {
-        let mut payload = HashMap::new();
-        payload.insert(
-            "api".to_string(),
-            serde_json::Value::String("room.register".to_string()),
-        );
-        payload.insert(
-            "roomid".to_string(),
-            serde_json::Value::String(room_id.to_string()),
-        );
+        let payload = h!["api" => "room.register", "roomid" => room_id];
         let clb = |_: Vec<u8>| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn user_modify(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
-        let mut payload = HashMap::new();
-        payload.insert(
-            "api".to_string(),
-            serde_json::Value::String("user.modify".to_string()),
-        );
-        payload.insert(
-            "laptop".to_string(),
-            serde_json::Value::String("mac".to_string()),
-        );
+        let payload = h!["api" => "user.modify", "laptop" => "mac"];
         let clb = |_: Vec<u8>| {};
         self.send(tx, payload, clb).await;
     }
 
     async fn update_presence(&mut self, tx: &tokio::sync::mpsc::Sender<Message>) {
-        let mut payload = HashMap::new();
-        payload.insert(
-            "api".to_string(),
-            serde_json::Value::String("presence.update".to_string()),
-        );
-        payload.insert(
-            "status".to_string(),
-            serde_json::Value::String("available".to_string()),
-        );
+        let payload = h!["api" => "presence.update", "status" => "available"];
         let clb = |_: Vec<u8>| {};
         self.send(tx, payload, clb).await;
     }
