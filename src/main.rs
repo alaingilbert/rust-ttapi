@@ -331,9 +331,9 @@ impl Bot {
 }
 
 async fn run() {
-    let auth = env::var("AUTH").unwrap();
-    let user_id = env::var("USER_ID").unwrap();
-    let room_id = env::var("ROOM_ID").unwrap();
+    let auth = env::var("AUTH").expect("AUTH not defined");
+    let user_id = env::var("USER_ID").expect("USER_ID not defined");
+    let room_id = env::var("ROOM_ID").expect("ROOM_ID not defined");
     let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str());
     bot.log_ws(true);
     bot.on_speak(|evt: SpeakEvt| {
