@@ -2,6 +2,7 @@ use async_tungstenite::tokio::connect_async;
 use async_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
+use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -153,14 +154,13 @@ impl Bot {
         let unix_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
-            .as_millis()
-            .to_string();
-
+            .as_millis();
+        let client_id = format!("{}-{}", unix_ms, rand::thread_rng().gen::<f64>());
         Bot {
             auth: auth.to_string(),
             user_id: user_id.to_string(),
             room_id: room_id.to_string(),
-            client_id: unix_ms,
+            client_id: client_id,
             client: WEB_CLIENT.to_string(),
             ..Default::default()
         }
