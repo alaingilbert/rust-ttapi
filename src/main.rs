@@ -218,7 +218,7 @@ impl Bot {
             if self.log_ws {
                 println!("< {}", msg);
             }
-            let tx = self.tx.clone().unwrap();
+            let tx = self.tx.as_ref().unwrap();
             tx.send(Message::text(msg)).await.unwrap();
         }
     }
@@ -319,7 +319,7 @@ impl Bot {
         if self.log_ws {
             println!("< {}", msg);
         }
-        let tx = self.tx.clone().unwrap();
+        let tx = self.tx.as_ref().unwrap();
         tx.send(Message::text(msg)).await.unwrap();
         self.unack_msgs.push(UnackMsg {
             msg_id: self.msg_id,
