@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::cell::RefCell;
 use std::time::SystemTime;
 use std::{collections::HashMap, env};
-use std::cell::RefCell;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 const ROOM_REGISTER: &str = "room.register";
@@ -221,7 +221,7 @@ impl Bot {
             if self.log_ws {
                 println!("< {}", msg);
             }
-            let tx = self.tx.clone().unwrap();
+            let tx = self.tx.as_ref().unwrap();
             tx.send(Message::text(msg)).unwrap();
         }
     }
@@ -256,7 +256,9 @@ impl Bot {
     fn execute_callback(&self, raw_json: &str) {
         let unack_msg = {
             let mut unack_msgs = self.unack_msgs.borrow_mut();
-            if unack_msgs.is_empty() { return; }
+            if unack_msgs.is_empty() {
+                return;
+            }
             let v: serde_json::Value = serde_json::from_str(raw_json).unwrap();
             let msg_id: i64 = match v["msgid"].to_string().parse() {
                 Ok(num) => num,
@@ -327,7 +329,7 @@ impl Bot {
         if self.log_ws {
             println!("< {}", msg);
         }
-        let tx = self.tx.clone().unwrap();
+        let tx = self.tx.as_ref().unwrap();
         tx.send(Message::text(msg)).unwrap();
         let mut msg_id = self.msg_id.borrow_mut();
         self.unack_msgs.borrow_mut().push(UnackMsg {
