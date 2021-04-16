@@ -45,7 +45,7 @@ struct UnackMsg {
 }
 
 #[derive(Default)]
-struct Bot {
+struct Bot<'a> {
     auth: String,
     user_id: String,
     room_id: String,
@@ -54,7 +54,7 @@ struct Bot {
     msg_id: i64,
     unack_msgs: Vec<UnackMsg>,
     callbacks: HashMap<String, Vec<fn(&str)>>,
-    speak_callbacks: Vec<fn(SpeakEvt)>,
+    speak_callback: Option<Box<dyn Fn(SpeakEvt) + 'a>>,
     pmmed_callbacks: Vec<fn(PmmedEvt)>,
     log_ws: bool,
     tx: Option<Sender<Message>>,
@@ -147,8 +147,8 @@ async fn start_ws(tx: Sender<String>, mut rx: Receiver<Message>) {
     m2.await.unwrap();
 }
 
-impl Bot {
-    pub fn new(auth: &str, user_id: &str, room_id: &str) -> Bot {
+impl<'a> Bot<'a> {
+    pub fn new(auth: &str, user_id: &str, room_id: &str) -> Bot<'a> {
         let unix_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -168,8 +168,11 @@ impl Bot {
         self.add_callback(event_name, clb);
     }
 
-    pub fn on_speak(&mut self, clb: fn(SpeakEvt)) {
-        self.speak_callbacks.push(clb);
+    pub fn on_speak<F: 'a>(&mut self, clb: F)
+    where
+        F: Fn(SpeakEvt),
+    {
+        self.speak_callback = Some(Box::new(clb));
     }
 
     pub fn on_pmmed(&mut self, clb: fn(PmmedEvt)) {
@@ -195,12 +198,19 @@ impl Bot {
         }
     }
 
-    fn emit(&self, cmd: &str, data: &str) {
+    fn emit(&mut self, cmd: &str, data: &str) {
         // Execute event specific callbacks
+        if cmd == SPEAK_EVT {
+            if let Ok(evt) =
+                serde_json::from_str::<SpeakEvt>(data).map_err(|err| log::error!("{}", err))
+            {
+                (self.speak_callback.as_ref().unwrap())(evt.clone());
+            }
+        }
         execute_callbacks!(
             cmd,
             data,
-            (SPEAK_EVT, self.speak_callbacks, SpeakEvt),
+            //(SPEAK_EVT, self.speak_callbacks, SpeakEvt),
             (PMMED_EVT, self.pmmed_callbacks, PmmedEvt)
         );
 
@@ -258,13 +268,13 @@ impl Bot {
                 Err(_) => continue,
             };
             if unack_msg.msg_id == msg_id {
+                if let Some(clb) = unack_msg.callback {
+                    (clb)(raw_json);
+                }
                 if let Some(api) = unack_msg.payload.get("api") {
                     if api == ROOM_REGISTER {
                         self.emit("roomChanged", raw_json);
                     }
-                }
-                if let Some(clb) = unack_msg.callback {
-                    (clb)(raw_json);
                 }
                 self.unack_msgs.remove(idx);
                 break;
