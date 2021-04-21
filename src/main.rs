@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::SystemTime;
 use std::{collections::HashMap, env};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use std::cell::RefCell;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 const ROOM_REGISTER: &str = "room.register";
 const USER_MODIFY: &str = "user.modify";
@@ -40,7 +41,7 @@ const WEB_CLIENT: &str = "web";
 struct UnackMsg {
     msg_id: i64,
     payload: HashMap<String, serde_json::Value>,
-    callback: Option<fn(&str)>,
+    callback: Option<fn(&Bot, &str)>,
 }
 
 #[derive(Default)]
@@ -50,13 +51,14 @@ struct Bot {
     room_id: String,
     client_id: String,
     client: String,
-    msg_id: i64,
-    unack_msgs: Vec<UnackMsg>,
-    callbacks: HashMap<String, Vec<fn(&str)>>,
-    speak_callbacks: Vec<fn(SpeakEvt)>,
-    pmmed_callbacks: Vec<fn(PmmedEvt)>,
+    msg_id: RefCell<i64>,
+    // unack_msgs must not be borrowed while calling any callbacks
+    unack_msgs: RefCell<Vec<UnackMsg>>,
+    callbacks: HashMap<String, Vec<fn(&Bot, &str)>>,
+    speak_callbacks: Vec<fn(&Bot, SpeakEvt)>,
+    pmmed_callbacks: Vec<fn(&Bot, PmmedEvt)>,
     log_ws: bool,
-    tx: Option<Sender<Message>>,
+    tx: Option<UnboundedSender<Message>>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,11 +90,11 @@ macro_rules! h {
 
 // Compare "cmd" with "cmp", if match, json parse "data" using "typ" and execute provided callbacks
 macro_rules! execute_callbacks {
-    ( $cmd: expr, $data: expr, $( ($cmp: expr, $callbacks: expr, $typ: ty)),*) => {{
+    ( $self: expr, $cmd: expr, $data: expr, $( ($cmp: expr, $callbacks: expr, $typ: ty)),*) => {{
         $(
             if $cmd == $cmp {
                 if let Ok(evt) = serde_json::from_str::<$typ>($data).map_err(|err| log::error!("{}", err)) {
-                    $callbacks.iter().for_each(|clb| (clb)(evt.clone()));
+                    $callbacks.iter().for_each(|clb| (clb)($self, evt.clone()));
                 }
             }
         )*
@@ -127,14 +129,14 @@ fn get_heartbeat_id(msg: &str) -> Option<&str> {
     Some(heartbeat_id.as_str())
 }
 
-async fn start_ws(tx: Sender<String>, mut rx: Receiver<Message>) {
+async fn start_ws(tx: UnboundedSender<String>, mut rx: UnboundedReceiver<Message>) {
     let ws_url = "wss://chat1.turntable.fm:8080/socket.io/websocket";
     let (ws_stream, _) = connect_async(ws_url).await.expect("Failed to connect");
     let (mut write, mut read) = ws_stream.split();
     let m1 = tokio::spawn(async move {
         while let Some(msg) = read.next().await {
             let data = msg.unwrap().into_text().unwrap();
-            tx.send(data).await.expect("failed to send data to tx");
+            tx.send(data).expect("failed to send data to tx");
         }
     });
     let m2 = tokio::spawn(async move {
@@ -164,21 +166,21 @@ impl Bot {
         }
     }
 
-    pub fn on(&mut self, event_name: &str, clb: fn(&str)) {
+    pub fn on(&mut self, event_name: &str, clb: fn(&Bot, &str)) {
         self.add_callback(event_name, clb);
     }
 
-    pub fn on_speak(&mut self, clb: fn(SpeakEvt)) {
+    pub fn on_speak(&mut self, clb: fn(&Bot, SpeakEvt)) {
         self.speak_callbacks.push(clb);
     }
 
-    pub fn on_pmmed(&mut self, clb: fn(PmmedEvt)) {
+    pub fn on_pmmed(&mut self, clb: fn(&Bot, PmmedEvt)) {
         self.pmmed_callbacks.push(clb);
     }
 
-    pub async fn speak(&mut self, msg: &str) {
+    pub fn speak(&self, msg: &str) {
         let payload = h!["api" => ROOM_SPEAK, "text" => msg, "room_id" => self.room_id];
-        self.send(payload, None).await;
+        self.send(payload, None);
     }
 
     pub fn log_ws(&mut self, log_ws: bool) {
@@ -186,8 +188,8 @@ impl Bot {
     }
 
     async fn start(&mut self) {
-        let (tx, mut rx) = channel(32);
-        let (tx1, rx1) = channel(32);
+        let (tx, mut rx) = unbounded_channel();
+        let (tx1, rx1) = unbounded_channel();
         self.tx = Some(tx1);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
@@ -198,6 +200,7 @@ impl Bot {
     fn emit(&self, cmd: &str, data: &str) {
         // Execute event specific callbacks
         execute_callbacks!(
+            self,
             cmd,
             data,
             (SPEAK_EVT, self.speak_callbacks, SpeakEvt),
@@ -207,7 +210,7 @@ impl Bot {
         // Execute string registered key, callbacks
         if let Some(callbacks) = self.callbacks.get(cmd) {
             for clb in callbacks {
-                (clb)(data);
+                (clb)(self, data);
             }
         }
     }
@@ -219,7 +222,7 @@ impl Bot {
                 println!("< {}", msg);
             }
             let tx = self.tx.clone().unwrap();
-            tx.send(Message::text(msg)).await.unwrap();
+            tx.send(Message::text(msg)).unwrap();
         }
     }
 
@@ -250,25 +253,29 @@ impl Bot {
         }
     }
 
-    fn execute_callback(&mut self, raw_json: &str) {
-        for (idx, unack_msg) in (&self.unack_msgs).iter().enumerate() {
+    fn execute_callback(&self, raw_json: &str) {
+        let unack_msg = {
+            let mut unack_msgs = self.unack_msgs.borrow_mut();
+            if unack_msgs.is_empty() { return; }
             let v: serde_json::Value = serde_json::from_str(raw_json).unwrap();
             let msg_id: i64 = match v["msgid"].to_string().parse() {
                 Ok(num) => num,
-                Err(_) => continue,
+                Err(_) => return,
             };
-            if unack_msg.msg_id == msg_id {
-                if let Some(api) = unack_msg.payload.get("api") {
-                    if api == ROOM_REGISTER {
-                        self.emit("roomChanged", raw_json);
-                    }
-                }
-                if let Some(clb) = unack_msg.callback {
-                    (clb)(raw_json);
-                }
-                self.unack_msgs.remove(idx);
-                break;
+            let i = match (0..unack_msgs.len()).find(|&i| unack_msgs[i].msg_id == msg_id) {
+                Some(i) => i,
+                None => return,
+            };
+            unack_msgs.remove(i)
+            // Release unack_msgs before calling the callbacks
+        };
+        if let Some(api) = unack_msg.payload.get("api") {
+            if api == ROOM_REGISTER {
+                self.emit("roomChanged", raw_json);
             }
+        }
+        if let Some(clb) = unack_msg.callback {
+            (clb)(self, raw_json);
         }
     }
 
@@ -279,29 +286,30 @@ impl Bot {
         }
     }
 
-    fn add_callback(&mut self, event_name: &str, clb: fn(&str)) {
+    fn add_callback(&mut self, event_name: &str, clb: fn(&Bot, &str)) {
         self.callbacks
             .entry(event_name.to_string())
             .or_insert_with(|| Vec::new())
             .push(clb);
     }
 
+    // TODO: room_register, user_modify, update_presence don't need to be async
     async fn room_register(&mut self, room_id: &str) {
         let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
-        self.send(payload, None).await;
+        self.send(payload, None);
     }
 
     async fn user_modify(&mut self) {
         let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
-        self.send(payload, None).await;
+        self.send(payload, None);
     }
 
     async fn update_presence(&mut self) {
         let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
-        self.send(payload, None).await;
+        self.send(payload, None);
     }
 
-    async fn send(&mut self, payload: HashMap<String, serde_json::Value>, clb: Option<fn(&str)>) {
+    fn send(&self, payload: HashMap<String, serde_json::Value>, clb: Option<fn(&Bot, &str)>) {
         let mut json_val = json!({
             "msgid": self.msg_id,
             "clientid": self.client_id,
@@ -320,13 +328,14 @@ impl Bot {
             println!("< {}", msg);
         }
         let tx = self.tx.clone().unwrap();
-        tx.send(Message::text(msg)).await.unwrap();
-        self.unack_msgs.push(UnackMsg {
-            msg_id: self.msg_id,
+        tx.send(Message::text(msg)).unwrap();
+        let mut msg_id = self.msg_id.borrow_mut();
+        self.unack_msgs.borrow_mut().push(UnackMsg {
+            msg_id: *msg_id,
             payload: original_payload,
             callback: clb,
         });
-        self.msg_id += 1;
+        *msg_id += 1;
     }
 }
 
@@ -336,22 +345,22 @@ async fn run() {
     let room_id = env::var("ROOM_ID").expect("ROOM_ID not defined");
     let mut bot = Bot::new(auth.as_str(), user_id.as_str(), room_id.as_str());
     bot.log_ws(true);
-    bot.on_speak(|evt: SpeakEvt| {
+    bot.on_speak(|bot, evt: SpeakEvt| {
         println!("chat event: {} ({}) => {}", evt.name, evt.userid, evt.text);
         if evt.text == "/ping" {
-            //bot.speak("pong").await;
+            bot.speak("pong");
         }
     });
-    bot.on_pmmed(|evt: PmmedEvt| {
+    bot.on_pmmed(|_, evt: PmmedEvt| {
         println!("pm event: {} => {}", evt.senderid, evt.text);
     });
-    bot.on("ready", |raw_json: &str| {
+    bot.on("ready", |_, raw_json: &str| {
         println!("bot is ready: {}", raw_json);
     });
-    bot.on("registered", |raw_json: &str| {
+    bot.on("registered", |_, raw_json: &str| {
         println!("bot registered: {}", raw_json);
     });
-    bot.on("roomChanged", |raw_json: &str| {
+    bot.on("roomChanged", |_, raw_json: &str| {
         println!("bot roomChanged: {}", raw_json);
     });
     bot.start().await;
