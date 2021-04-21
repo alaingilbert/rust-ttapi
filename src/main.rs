@@ -187,7 +187,7 @@ impl Bot {
         self.log_ws = log_ws;
     }
 
-    async fn start(&mut self) {
+    pub async fn start(&mut self) {
         let (tx, mut rx) = unbounded_channel();
         let (tx1, rx1) = unbounded_channel();
         self.tx = Some(tx1);
