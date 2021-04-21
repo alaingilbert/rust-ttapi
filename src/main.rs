@@ -179,7 +179,7 @@ impl Bot {
     }
 
     pub fn speak(&self, msg: &str) {
-        let payload = h!["api" => ROOM_SPEAK, "text" => msg, "room_id" => self.room_id];
+        let payload = h!["api" => ROOM_SPEAK, "text" => msg, "roomid" => self.room_id];
         self.send(payload, None);
     }
 
