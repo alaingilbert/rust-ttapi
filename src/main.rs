@@ -58,7 +58,7 @@ struct Bot {
     callbacks: HashMap<String, Vec<fn(&Bot, &str)>>,
     speak_callbacks: Vec<fn(&Bot, SpeakEvt)>,
     pmmed_callbacks: Vec<fn(&Bot, PmmedEvt)>,
-    log_ws: bool,
+    log_ws: bool, // either or not to log websocket messages
     tx: Option<UnboundedSender<Message>>,
 }
 
@@ -193,7 +193,7 @@ impl Bot {
         self.tx = Some(tx1);
         tokio::spawn(start_ws(tx, rx1));
         while let Some(msg) = rx.recv().await {
-            self.process_msg(msg.as_str()).await;
+            self.process_msg(msg.as_str());
         }
     }
 
@@ -215,7 +215,7 @@ impl Bot {
         }
     }
 
-    async fn process_heartbeat(&self, msg: &str) {
+    fn process_heartbeat(&self, msg: &str) {
         if let Some(heartbeat_id) = get_heartbeat_id(msg) {
             let msg = format!("~m~{}~m~{}", heartbeat_id.len(), heartbeat_id);
             if self.log_ws {
@@ -226,23 +226,23 @@ impl Bot {
         }
     }
 
-    async fn process_msg(&mut self, msg: &str) {
+    fn process_msg(&mut self, msg: &str) {
         if self.log_ws {
             println!("> {}", msg);
         }
         // Heartbeat
         if is_heartbeat(msg) {
-            self.process_heartbeat(msg).await;
+            self.process_heartbeat(msg);
             return;
         }
 
         if msg == "~m~10~m~no_session" {
             self.emit("ready", "");
-            self.update_presence().await;
-            self.user_modify().await;
+            self.update_presence();
+            self.user_modify();
             if self.room_id != "" {
                 let room_id = self.room_id.clone();
-                self.room_register(room_id.as_str()).await;
+                self.room_register(room_id.as_str());
             }
             return;
         }
@@ -296,17 +296,17 @@ impl Bot {
     }
 
     // TODO: room_register, user_modify, update_presence don't need to be async
-    async fn room_register(&mut self, room_id: &str) {
+    fn room_register(&mut self, room_id: &str) {
         let payload = h!["api" => ROOM_REGISTER, "roomid" => room_id];
         self.send(payload, None);
     }
 
-    async fn user_modify(&mut self) {
+    fn user_modify(&mut self) {
         let payload = h!["api" => USER_MODIFY, "laptop" => MAC_LAPTOP];
         self.send(payload, None);
     }
 
-    async fn update_presence(&mut self) {
+    fn update_presence(&mut self) {
         let payload = h!["api" => PRESENCE_UPDATE, "status" => AVAILABLE];
         self.send(payload, None);
     }
