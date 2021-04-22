@@ -40,7 +40,7 @@ const WEB_CLIENT: &str = "web";
 // type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 struct UnackMsg {
-    msg_id: i64,
+    msg_id: usize,
     payload: HashMap<String, serde_json::Value>,
     callback: Option<fn(&Bot, &str)>,
 }
@@ -52,7 +52,7 @@ struct Bot {
     room_id: String,
     client_id: String,
     client: String,
-    msg_id: RefCell<i64>,
+    msg_id: RefCell<usize>,
     // unack_msgs must not be borrowed while calling any callbacks
     unack_msgs: RefCell<Vec<UnackMsg>>,
     callbacks: HashMap<String, Vec<fn(&Bot, &str)>>,
@@ -260,7 +260,7 @@ impl Bot {
                 return;
             }
             let v: serde_json::Value = serde_json::from_str(raw_json).unwrap();
-            let msg_id: i64 = match v["msgid"].to_string().parse() {
+            let msg_id: usize = match v["msgid"].to_string().parse() {
                 Ok(num) => num,
                 Err(_) => return,
             };
